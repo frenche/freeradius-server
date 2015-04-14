@@ -3,6 +3,7 @@ FreeRADIUS 3.0.8 Thu 19 Feb 2015 12:00:00 EDT urgency=medium
         * Allow syslog_severity to be set in rlm_linelog.
 	* Allow defaults to be set for bulk clients in LDAP and couchbase.
 	* Updates to dhcpclient.  Patches from Nicolas C.
+	* Updates to radeapclient.  Patches from Nicolas C.
 	* rlm_mschap now supports direct connections to winbind, which
 	  is faster than ntlm_auth.  See raddb/mods-available/mschap.
 	  Patch from Matthew Newton.
@@ -14,6 +15,8 @@ FreeRADIUS 3.0.8 Thu 19 Feb 2015 12:00:00 EDT urgency=medium
 	  EAP types like this are broken.
 	* Add support for server side sort controls when searching for
 	  user objects in rlm_ldap.
+	* Add session-state list to rlm_cache. This is to support
+	  future functionality with EAP session resumption.
 
 	Bug fixes
 	* Don't complain about "authorize" in "server {}" blocks, but
@@ -72,6 +75,9 @@ FreeRADIUS 3.0.8 Thu 19 Feb 2015 12:00:00 EDT urgency=medium
 	  Closes #955.
 	* Fix issue in rlm_cache_memcached driver that caused variable
 	  length values to be truncated.
+	* Add more validation checks in rlm_cache to ensure map
+	  destinations can only be for lists represented in the cache
+	  entry.
 
 FreeRADIUS 3.0.7 Thu 19 Feb 2015 12:00:00 EDT urgency=medium
 	Feature improvements
