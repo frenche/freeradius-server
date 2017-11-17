@@ -145,6 +145,91 @@ static void PRF(unsigned char const *secret, unsigned int secret_len,
 	}
 }
 
+#define TEST_FAIL() 0
+
+static int openssl_hmac_vector(const EVP_MD *type, const uint8_t *key,
+                               size_t key_len, size_t num_elem,
+                               const uint8_t *addr[], const size_t *len, uint8_t *mac,
+                               unsigned int mdlen)
+{
+        HMAC_CTX *ctx;
+        size_t i;
+        int res;
+
+        if (TEST_FAIL())
+                return -1;
+
+        ctx = HMAC_CTX_new();
+        if (!ctx)
+                return -1;
+        res = HMAC_Init_ex(ctx, key, key_len, type, NULL);
+        if (res != 1)
+                goto done;
+
+        for (i = 0; i < num_elem; i++)
+                HMAC_Update(ctx, addr[i], len[i]);
+
+        res = HMAC_Final(ctx, mac, &mdlen);
+done:
+        HMAC_CTX_free(ctx);
+
+        return res == 1 ? 0 : -1;
+}
+
+
+static int hmac_sha256_vector(const uint8_t *key, size_t key_len, size_t num_elem,
+		                       const uint8_t *addr[], const size_t *len, uint8_t *mac)
+{
+	return openssl_hmac_vector(EVP_sha256(), key, key_len, num_elem, addr, len, mac, 32);
+}
+
+static int hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *data,
+		                size_t data_len, uint8_t *mac)
+{
+	return hmac_sha256_vector(key, key_len, 1, &data, &data_len, mac);
+}
+
+
+#define SHA256_MAC_LEN 32
+
+static void tls_prf_sha256(const uint8_t *secret, size_t secret_len, const char *label, const uint8_t *seed, size_t seed_len, uint8_t *out, size_t outlen)
+{
+        size_t clen;
+        uint8_t A[SHA256_MAC_LEN];
+        uint8_t P[SHA256_MAC_LEN];
+        size_t pos;
+        const unsigned char *addr[3];
+        size_t len[3];
+
+        addr[0] = A;
+        len[0] = SHA256_MAC_LEN;
+        addr[1] = (unsigned char *) label;
+        len[1] = strlen(label);
+        addr[2] = seed;
+        len[2] = seed_len;
+
+        /*
+         * RFC 5246, Chapter 5
+         * A(0) = seed, A(i) = HMAC(secret, A(i-1))
+         * P_hash = HMAC(secret, A(1) + seed) + HMAC(secret, A(2) + seed) + ..
+         * PRF(secret, label, seed) = P_SHA256(secret, label + seed)
+         */
+
+        hmac_sha256_vector(secret, secret_len, 2, &addr[1], &len[1], A);
+
+        pos = 0;
+        while (pos < outlen) {
+                hmac_sha256_vector(secret, secret_len, 3, addr, len, P);
+                hmac_sha256(secret, secret_len, A, SHA256_MAC_LEN, A);
+
+                clen = outlen - pos;
+                if (clen > SHA256_MAC_LEN)
+                        clen = SHA256_MAC_LEN;
+                memcpy(out + pos, P, clen);
+                pos += clen;
+        }
+}
+
 #define EAPTLS_MPPE_KEY_LEN     32
 
 /*
@@ -272,7 +357,8 @@ void eap_fast_tls_gen_challenge(SSL *s, uint8_t *buffer, uint8_t *scratch, size_
 	p += SSL3_RANDOM_SIZE;
 
 	master_key_len = SSL_SESSION_get_master_key(SSL_get_session(s), master_key, sizeof(master_key));
-	PRF(master_key, master_key_len, seed, p - seed, buffer, scratch, size);
+	//PRF(master_key, master_key_len, seed, p - seed, buffer, scratch, size);
+	tls_prf_sha256(master_key, master_key_len, prf_label, seed + len, p - seed - len, buffer, size);
 }
 
 

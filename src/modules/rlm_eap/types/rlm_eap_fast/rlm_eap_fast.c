@@ -567,7 +567,7 @@ static int mod_session_init(void *type_arg, eap_handler_t *handler)
 	}
 
 // FIXME TLSv1.2 uses a different PRF and SSL_export_keying_material("key expansion") is forbidden
-#ifdef SSL_OP_NO_TLSv1_2
+#ifdef AAA_SSL_OP_NO_TLSv1_2
 	/*
 	 *	Forcibly disable TLSv1.2
 	 */
