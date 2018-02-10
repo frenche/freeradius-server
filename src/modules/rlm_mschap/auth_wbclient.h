@@ -15,5 +15,7 @@ RCSIDH(auth_wbclient_h, "$Id$")
 int do_auth_wbclient(rlm_mschap_t *inst, REQUEST *request,
 		     uint8_t const *challenge, uint8_t const *response,
 		     uint8_t nthashhash[NT_DIGEST_LENGTH]);
+int rlm_mschap_wb_groupcmp(void *instance, REQUEST *request, UNUSED VALUE_PAIR *thing, VALUE_PAIR *check,
+                             UNUSED VALUE_PAIR *check_pairs, UNUSED VALUE_PAIR **reply_pairs);
 
 #endif /*_AUTH_WBCLIENT_H*/

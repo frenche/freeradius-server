@@ -71,6 +71,89 @@ static char *wbclient_normalise_username(TALLOC_CTX *tctx, struct wbcContext *ct
 	return res;
 }
 
+
+/** Perform AD-Group comparison checking
+ *
+ * @param instance of the rlm_machap module.
+ * @param request Current request.
+ * @param thing Unknown.
+ * @param check Which group to check for user membership.
+ * @param check_pairs Unknown.
+ * @param reply_pairs Unknown.
+ * @return
+ *	- 1 on failure (or if the user is not a member).
+ *	- 0 on success.
+ */
+int rlm_mschap_wb_groupcmp(void *instance, REQUEST *request, UNUSED VALUE_PAIR *thing,
+				VALUE_PAIR *check, UNUSED VALUE_PAIR *check_pairs,
+				UNUSED VALUE_PAIR **reply_pairs)
+{
+	rlm_mschap_t	*inst = instance;
+	VALUE_PAIR	*groups = NULL;
+	struct wbcContext *wb_ctx = NULL;
+	wbcErr err;
+	struct wbcDomainSid sid;
+	enum wbcSidType type;
+	char *sid_str = NULL;
+
+	RDEBUG("Checking if user is member of AD group \"%s\"", check->vp_strvalue);
+
+	if (check->vp_length == 0) {
+		REDEBUG("Cannot do comparison (AD group is empty)");
+		return 1;
+	}
+
+	wb_ctx = fr_connection_get(inst->wb_pool);
+	if (wb_ctx == NULL) {
+		RERROR("Unable to get winbind connection from pool");
+		return 1;
+	}
+
+	/* TODO: Parse domain part from check group (DOM\group), though
+	   passing it directly seem to work just fine */
+
+	err = wbcCtxLookupName(wb_ctx, ""/*domain*/, check->vp_strvalue, &sid, &type);
+
+	/* We are done with the context */
+	fr_connection_release(inst->wb_pool, wb_ctx);
+
+	if (!WBC_ERROR_IS_OK(err)) {
+		REDEBUG2("wbcCtxLookupName() failed for group: %s", check->vp_strvalue);
+		REDEBUG2("Error message: %s", wbcErrorString(err));
+
+		return 1;
+	}
+
+	err = wbcSidToString(&sid, &sid_str);
+	if (!WBC_ERROR_IS_OK(err)) {
+		REDEBUG2("Failed to decode group SID, error: %s", wbcErrorString(err));
+
+		return 1;
+	}
+
+	RDEBUG("Resolved SID: <%s>, type: <%s>", sid_str, wbcSidTypeString(type));
+
+	// TODO: Cache group name to SID mapping!
+
+	groups = fr_pair_find_by_da(request->config, dict_attrbyname("AD-Group-SID"), TAG_ANY);
+	while (groups) {
+		if (!strncmp(sid_str, groups->vp_strvalue, groups->vp_length))
+		{
+			RDEBUG("Found matching group SID: <%s>", sid_str);
+			wbcFreeMemory(sid_str);
+
+			return 0;
+		}
+		RDEBUG("User's group SID: <%s> did not match", groups->vp_strvalue);
+		groups = groups->next;
+	}
+
+	RDEBUG("Group SID <%s> did not match any of user's SIDs", sid_str);
+	wbcFreeMemory(sid_str);
+
+	return 1;
+}
+
 /*
  *	Check NTLM authentication direct to winbind via
  *	Samba's libwbclient library
@@ -209,6 +292,33 @@ normalised_username_retry_failure:
 	case WBC_ERR_SUCCESS:
 		rcode = 0;
 		RDEBUG2("Authenticated successfully");
+
+		/* TODO: save more info on request */
+		RDEBUG2("User: %s, UPN: %s logon-server: %s",
+			info->account_name, info->user_principal, info->logon_server);
+
+		RDEBUG2("Number of user's SIDs: %u", info->num_sids);
+
+		/* Note: sids[0] = user, sids[1] = primary group */
+		for(unsigned i = 0; i < info->num_sids; ++i) {
+			REQUEST *outer = request->parent ?: request;
+
+			char *sid_str = NULL;
+			wbcErr ret = wbcSidToString(&info->sids[i].sid, &sid_str);
+			if (!WBC_ERROR_IS_OK(ret))
+			{
+				RDEBUG2("Failed to decode SID num [%u]", i);
+			}
+			else if (fr_pair_make(outer, &outer->config, "AD-Group-SID", sid_str, T_OP_ADD))
+			{
+				RDEBUG2("SID [%s] was added to outer config list", sid_str);
+			}
+			else
+			{
+				RDEBUG2("Failed adding SID [%s] to outer config list", sid_str);
+			}
+			wbcFreeMemory(sid_str);
+		}
 		/* Grab the nthashhash from the result */
 		memcpy(nthashhash, info->user_session_key, NT_DIGEST_LENGTH);
 		break;

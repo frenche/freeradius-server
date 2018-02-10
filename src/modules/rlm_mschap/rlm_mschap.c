@@ -572,6 +572,10 @@ static int mod_bootstrap(CONF_SECTION *conf, void *instance)
 {
 	char const *name;
 	rlm_mschap_t *inst = instance;
+	ATTR_FLAGS flags;
+
+	const char *group_sid = "AD-Group-SID";
+	const char *group = "AD-Group";
 
 	/*
 	 *	Create the dynamic translation.
@@ -580,6 +584,22 @@ static int mod_bootstrap(CONF_SECTION *conf, void *instance)
 	if (!name) name = cf_section_name1(conf);
 	inst->xlat_name = name;
 	xlat_register(inst->xlat_name, mschap_xlat, NULL, inst);
+
+	memset(&flags, 0, sizeof(flags));
+	if (dict_addattr(group_sid, -1, 0, PW_TYPE_STRING, flags)) {
+		cf_log_err_cs(conf, "Error registering AD-Group-SID attribute: %s", fr_strerror());
+		return -1;
+	}
+
+	cf_log_err_cs(conf, "Successfully added AD-Group-SID attribute");
+
+	if (paircompare_register_byname(group, dict_attrbyvalue(PW_USER_NAME, 0), false, rlm_mschap_wb_groupcmp, inst))
+	{
+		cf_log_err_cs(conf, "Error registering AD-Group compare function: %s", fr_strerror());
+		return -1;
+	}
+
+	cf_log_err_cs(conf, "Successfully registered AD-Group compare function");
 
 	return 0;
 }
