@@ -539,7 +539,7 @@ int radius_exec_program(TALLOC_CTX *ctx, char *out, size_t outlen, VALUE_PAIR **
 	char answer[4096];
 #endif
 
-	RDEBUG2("Executing: %s:", cmd);
+	DEBUG2("Executing: %s:", cmd);
 
 	if (out) *out = '\0';
 
@@ -559,7 +559,7 @@ int radius_exec_program(TALLOC_CTX *ctx, char *out, size_t outlen, VALUE_PAIR **
 		 *	Failure - radius_readfrom_program will
 		 *	have called close(from_child) for us
 		 */
-		RERROR("Failed to read from child output");
+		DEBUG("Failed to read from child output");
 		return -1;
 
 	}
@@ -604,7 +604,7 @@ int radius_exec_program(TALLOC_CTX *ctx, char *out, size_t outlen, VALUE_PAIR **
 		}
 
 		if (fr_pair_list_afrom_str(ctx, answer, output_pairs) == T_INVALID) {
-			RERROR("Failed parsing output from: %s: %s", cmd, fr_strerror());
+			DEBUG("Failed parsing output from: %s: %s", cmd, fr_strerror());
 			strlcpy(out, answer, len);
 			ret = -1;
 		}
@@ -625,7 +625,7 @@ int radius_exec_program(TALLOC_CTX *ctx, char *out, size_t outlen, VALUE_PAIR **
 wait:
 	child_pid = rad_waitpid(pid, &status);
 	if (child_pid == 0) {
-		RERROR("Timeout waiting for child");
+		DEBUG("Timeout waiting for child");
 
 		return -2;
 	}
@@ -634,16 +634,16 @@ wait:
 		if (WIFEXITED(status)) {
 			status = WEXITSTATUS(status);
 			if ((status != 0) || (ret < 0)) {
-				RERROR("Program returned code (%d) and output '%s'", status, answer);
+				DEBUG("Program returned code (%d) and output '%s'", status, answer);
 			} else {
-				RDEBUG2("Program returned code (%d) and output '%s'", status, answer);
+				DEBUG2("Program returned code (%d) and output '%s'", status, answer);
 			}
 
 			return ret < 0 ? ret : status;
 		}
 	}
 
-	RERROR("Abnormal child exit: %s", fr_syserror(errno));
+	DEBUG("Abnormal child exit: %s", fr_syserror(errno));
 #endif	/* __MINGW32__ */
 
 	return -1;
