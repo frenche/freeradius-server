@@ -30,6 +30,95 @@
 
 #include <sasl/sasl.h>
 
+#include <gssapi/gssapi_krb5.h>
+
+
+static void display_gss_error(int type, OM_uint32 code) {
+	OM_uint32 maj, min, ctx = 0;
+	gss_buffer_desc status;
+
+	do {
+		maj = gss_display_status(&min,
+					 code,
+					 type,
+					 GSS_C_NO_OID,
+					 &ctx,
+					 &status);
+		if (GSS_ERROR(maj)) {
+			DEBUG("Bad gss error!");
+			break;
+		} else {
+			DEBUG("%.*s\n", (int) status.length, (char *) status.value);
+			gss_release_buffer(&min, &status);
+		}
+	} while (ctx != 0);
+}
+
+static void log_gss_error(const char *prefix, uint32_t maj, uint32_t min)
+{
+	DEBUG("%s: ", prefix);
+	display_gss_error(GSS_C_GSS_CODE, maj);
+	display_gss_error(GSS_C_MECH_CODE, min);
+}
+
+static void display_gss_name(gss_name_t name) {
+	OM_uint32 maj, min;
+	gss_buffer_desc output_name_buffer = GSS_C_EMPTY_BUFFER;
+
+	maj = gss_display_name(&min, name, &output_name_buffer, NULL);
+	if (GSS_ERROR(maj)) {
+		log_gss_error("display_gss_name: failed", maj, min);
+		return;
+	}
+
+	DEBUG("GSS cache principal: %.*s",
+		(int) output_name_buffer.length,
+		(char *) output_name_buffer.value);
+
+	gss_release_buffer(&min, &output_name_buffer);
+}
+
+/* This fucntion assumes per thread ccache was already set */
+int verify_krb5_creds(void);
+int verify_krb5_creds(void)
+{
+	OM_uint32 maj, min, lifetime = 0;
+	gss_name_t cache_principal = GSS_C_NO_NAME;
+
+	maj = gss_inquire_cred(&min, GSS_C_NO_CREDENTIAL,
+				&cache_principal, &lifetime, NULL, NULL);
+	if (GSS_ERROR(maj)) {
+		log_gss_error("gss_inquire_cred: cache failed", maj, min);
+		return FALSE;
+	}
+
+	DEBUG("GSS credentials valid for <%u> seconds", lifetime);
+
+	display_gss_name(cache_principal);
+	gss_release_name(&min, &cache_principal);
+
+	return TRUE;
+}
+
+gss_cred_id_t acquire_cred_from_cache(const char *ccache);
+gss_cred_id_t acquire_cred_from_cache(const char *ccache)
+{
+	OM_uint32 maj, min;
+	gss_cred_id_t creds = GSS_C_NO_CREDENTIAL;
+	gss_key_value_element_desc store_elm = { "ccache", ccache };
+	gss_key_value_set_desc store = { 1, &store_elm };
+
+	maj = gss_acquire_cred_from(&min, GSS_C_NO_NAME, GSS_C_INDEFINITE,
+					GSS_C_NO_OID_SET, GSS_C_INITIATE, &store,
+					&creds, NULL, NULL);
+	if (GSS_ERROR(maj)) {
+		log_gss_error("gss_acquire_cred_from()", maj, min);
+		return GSS_C_NO_CREDENTIAL;
+	}
+
+	return creds;
+}
+
 /** Data passed to the _sasl interact callback.
  *
  */
@@ -43,6 +132,12 @@ typedef struct rlm_ldap_sasl_ctx {
 	ldap_sasl		*extra;		//!< Extra fields (realm and proxy id).
 } rlm_ldap_sasl_ctx_t;
 
+#define do_ldap_option(_option, _name, _value) \
+	if (ldap_set_option(handle, _option, _value) != LDAP_OPT_SUCCESS) { \
+		ldap_get_option(handle, LDAP_OPT_ERROR_NUMBER, &ldap_errno); \
+		LDAP_ERR("Failed setting connection option %s: %s", _name, \
+			 (ldap_errno != LDAP_SUCCESS) ? ldap_err2string(ldap_errno) : "Unknown error"); \
+	}
 /** Callback for ldap_sasl_interactive_bind
  *
  * @param handle used for the SASL bind.
@@ -51,13 +146,22 @@ typedef struct rlm_ldap_sasl_ctx {
  * @param sasl_callbacks Array of challenges to provide responses for.
  * @return SASL_OK.
  */
-static int _sasl_interact(UNUSED LDAP *handle, UNUSED unsigned flags, void *ctx, void *sasl_callbacks)
+static int _sasl_interact(LDAP *handle, UNUSED unsigned flags, void *ctx, void *sasl_callbacks)
 {
 	rlm_ldap_sasl_ctx_t	*this = ctx;
 	REQUEST			*request = this->request;
 	rlm_ldap_t const	*inst = this->inst;
 	sasl_interact_t		*cb = sasl_callbacks;
 	sasl_interact_t		*cb_p;
+	int			ldap_errno = 0;
+
+	gss_cred_id_t creds = acquire_cred_from_cache("/tmp/krb5cc_fr");
+	if (creds != GSS_C_NO_CREDENTIAL) {
+		DEBUG("WE GOT CREDS !!!");
+		verify_krb5_creds();
+		do_ldap_option(LDAP_OPT_X_SASL_GSS_CREDS, "SASL_GSS_CREDS", creds);
+	}
+
 
 	for (cb_p = cb; cb_p->id != SASL_CB_LIST_END; cb_p++) {
 		MOD_ROPTIONAL(RDEBUG3, DEBUG3, "SASL challenge : %s", cb_p->challenge);
